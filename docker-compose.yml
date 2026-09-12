@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: chhaya-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chhaya_admin
+      POSTGRES_PASSWORD: chhaya_secure_2026
+      POSTGRES_DB: chhaya_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./services/backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - chhaya-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: chhaya-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_secure_2026
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - chhaya-net
+
+networks:
+  chhaya-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

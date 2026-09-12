@@ -13,3 +13,10 @@ build/
 pgdata/
 redisdata/
 miniodata/
+.env* 
+node_modules/ 
+dist/ 
+build/ 
+.DS_Store 
+!.env.example 
+!services/backend/.env.example 

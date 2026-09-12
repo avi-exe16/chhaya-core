@@ -1,0 +1,47 @@
+{
+  "type": "FeatureCollection",
+  "district": "Begusarai",
+  "state": "Bihar",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "ward_id": "BEGU_WARD_01",
+        "name": "Nagar Parishad Main Market",
+        "vulnerability_index": 0.35
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [86.1200, 25.4100],
+            [86.1400, 25.4100],
+            [86.1400, 25.4300],
+            [86.1200, 25.4300],
+            [86.1200, 25.4100]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "ward_id": "BEGU_WARD_02",
+        "name": "Barauni Industrial Peripheral Ward",
+        "vulnerability_index": 0.85
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [86.0800, 25.3800],
+            [86.1100, 25.3800],
+            [86.1100, 25.4100],
+            [86.0800, 25.4100],
+            [86.0800, 25.3800]
+          ]
+        ]
+      }
+    }
+  ]
+}
