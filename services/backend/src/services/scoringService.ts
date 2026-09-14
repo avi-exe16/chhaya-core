@@ -25,10 +25,7 @@ export interface ScoringResult {
 }
 
 export class ScoringService {
-  /**
-   * Exhaustive map: TypeScript ensures every AssetSector key is present
-   * and conforms strictly to SectorWeightConfig.
-   */
+  
   private static readonly SECTOR_WEIGHTS: Record<AssetSector, SectorWeightConfig> = {
     drainage: { base: 0.75, multiplier: 1.20 },
     water_supply: { base: 0.85, multiplier: 1.30 },
