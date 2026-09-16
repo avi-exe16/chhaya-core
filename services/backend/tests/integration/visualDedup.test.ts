@@ -27,7 +27,7 @@ describe('Visual Deduplication via pHash & PostGIS Hamming Distance', () => {
     const phashA = 'ffffffffffffffff';
     const phashB = 'fffffffffffffffe'; // 1-bit difference (Hamming distance = 1)
 
-    // 1. Insert initial raw incident
+    
     await pool.query(
       `INSERT INTO incidents (
         id, coordinates, phash, phone_hash, source, hardware_timestamp, status, created_at
@@ -48,7 +48,7 @@ describe('Visual Deduplication via pHash & PostGIS Hamming Distance', () => {
 
     expect(clusterId1).toBeDefined();
 
-    // 2. Insert second incident ~78m away with near-identical pHash
+    
     const offsetLat = baseLat + 0.0007;
     await pool.query(
       `INSERT INTO incidents (
@@ -68,10 +68,10 @@ describe('Visual Deduplication via pHash & PostGIS Hamming Distance', () => {
       recipientPhone: '+919999999992',
     });
 
-    // Both reports must share the same cluster ID
+   
     expect(clusterId2).toBe(clusterId1);
 
-    // Verify incident_count increments to 2
+    
     const clusterRes = await pool.query(
       'SELECT incident_count FROM incident_clusters WHERE id = $1;',
       [clusterId1]
