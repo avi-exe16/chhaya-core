@@ -60,3 +60,9 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 CREATE INDEX idx_incidents_spatial ON incidents USING GIST(coordinates);
 CREATE INDEX idx_incidents_phash ON incidents(phash);
+
+-- Multimodal Visual Deduplication (Hamming Distance for 64-bit Hex pHash)
+CREATE OR REPLACE FUNCTION hamming_distance(h1 text, h2 text)
+RETURNS integer LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT length(replace(((('x' || lpad(h1, 16, '0'))::bit(64) # ('x' || lpad(h2, 16, '0'))::bit(64))::text), '0', ''));
+$$;
