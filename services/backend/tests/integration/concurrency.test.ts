@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import crypto from 'crypto';
+import { pool as db } from '../../src/db/client';
 import { WhatsAppController } from '../../src/api/whatsappController';
-import { db, pool } from '../../src/db/client';
-import { redisConnection, intakeQueue } from '../../src/queues/intakeQueue';
+import { intakeQueue } from '../../src/queues/intakeQueue';
+import { redisClient } from '../../src/db/redis';
 
 const app = express();
 app.use(express.json());
@@ -12,32 +13,44 @@ app.post('/webhook', WhatsAppController.handleInbound);
 
 describe('High-Throughput Spatial Ingestion & Concurrency Guard', () => {
   beforeAll(async () => {
-    await db.query(`DELETE FROM incidents WHERE whatsapp_message_id LIKE 'test_%'`);
+    await redisClient.flushdb();
+    await db.query(`DELETE FROM incidents WHERE id::text LIKE 'test_%'`);
   });
 
   afterAll(async () => {
-    await db.query(`DELETE FROM incidents WHERE whatsapp_message_id LIKE 'test_%'`);
+    await db.query(`DELETE FROM incidents WHERE id::text LIKE 'test_%'`);
     await intakeQueue.close();
-    await redisConnection.quit();
-    await pool.end();
+    await redisClient.quit();
+    await db.end();
   });
 
   it('drops identical retried webhooks instantly at the boundary (Idempotency)', async () => {
     const uniqueMsgId = `test_idem_\({Date.now()}_\){crypto.randomUUID().slice(0, 8)}`;
     const payload = {
       object: 'whatsapp_business_account',
-      entry: [{
-        changes: [{
-          value: {
-            messages: [{
-              id: uniqueMsgId,
-              from: '919999999999',
-              type: 'location',
-              location: { latitude: 25.42000, longitude: 86.13000 }
-            }]
-          }
-        }]
-      }]
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    id: uniqueMsgId,
+                    from: '919876543210',
+                    timestamp: `${Math.floor(Date.now() / 1000)}`,
+                    type: 'location',
+                    location: {
+                      latitude: 19.076,
+                      longitude: 72.8777,
+                      name: 'Dharavi Sector 5',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
     };
 
     const firstCall = await request(app).post('/webhook').send(payload);
@@ -50,41 +63,40 @@ describe('High-Throughput Spatial Ingestion & Concurrency Guard', () => {
   });
 
   it('survives concurrent burst without creating duplicate clusters for the same spatial grid', async () => {
-    const burstSize = 5;
-    const batchPrefix = `test_burst_\({Date.now()}_\){crypto.randomUUID().slice(0, 6)}`;
-    const baseLat = 25.42010;
-    const baseLng = 86.13010;
+    const baseLat = 19.076;
+    const baseLng = 72.8777;
+    const requests = Array.from({ length: 5 }).map((_, idx) => {
+      const burstMsgId = `test_burst_\({Date.now()}_\){idx}_${crypto.randomUUID().slice(0, 8)}`;
+      return request(app)
+        .post('/webhook')
+        .send({
+          object: 'whatsapp_business_account',
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        id: burstMsgId,
+                        from: `91987654321${idx}`,
+                        timestamp: `${Math.floor(Date.now() / 1000)}`,
+                        type: 'location',
+                        location: {
+                          latitude: baseLat + idx * 0.00001,
+                          longitude: baseLng + idx * 0.00001,
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        });
+    });
 
-    const promises = [];
-
-    for (let i = 0; i < burstSize; i++) {
-      const distinctMsgId = `\({batchPrefix}_\){i}_${crypto.randomUUID().slice(0, 4)}`;
-      const distinctPhone = `9198000000${i}`;
-
-      const payload = {
-        object: 'whatsapp_business_account',
-        entry: [{
-          changes: [{
-            value: {
-              messages: [{
-                id: distinctMsgId,
-                from: distinctPhone,
-                type: 'location',
-                location: {
-                  latitude: baseLat + (i * 0.00005),
-                  longitude: baseLng + (i * 0.00005)
-                }
-              }]
-            }
-          }]
-        }]
-      };
-
-      promises.push(request(app).post('/webhook').send(payload));
-    }
-
-    const responses = await Promise.all(promises);
-
+    const responses = await Promise.all(requests);
     for (const res of responses) {
       expect(res.status).toBe(200);
       expect(res.text).toBe('EVENT_RECEIVED');

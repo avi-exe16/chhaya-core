@@ -15,11 +15,12 @@ export interface IncidentJobData {
   recipientPhone?: string | null;
 }
 
-export async function processIncidentJob(job: Job<IncidentJobData>) {
-  const { data } = job;
+export async function processIncidentJob(job: Job | any) {
+  const data = (job && job.data) ? job.data : job;
+  const jobId = job?.id ?? 'direct-call';
   const { ticketId, latitude, longitude, wardId = null, phash = null, recipientPhone = null } = data;
 
-  console.log(`[Worker] Processing ingestion job ${job.id} for ticket: ${ticketId}`);
+  console.log(`[Worker] Processing ingestion job \({jobId} for ticket:\){ticketId}`);
 
   const client = await pool.connect();
 
@@ -30,7 +31,7 @@ export async function processIncidentJob(job: Job<IncidentJobData>) {
     const gridKey = Math.floor(latitude * 1000) ^ Math.floor(longitude * 1000);
     await client.query('SELECT pg_advisory_xact_lock($1)', [gridKey]);
 
-    const isValidPhash = phash && phash.trim().length > 0;
+    const isValidPhash = typeof phash === 'string' && /^[0-9a-fA-F]{16}$/.test(phash.trim());
     let targetClusterId: string | null = null;
 
     if (isValidPhash) {
@@ -40,6 +41,7 @@ export async function processIncidentJob(job: Job<IncidentJobData>) {
         FROM incidents i
         JOIN incident_clusters c ON i.cluster_id = c.id
         WHERE i.phash IS NOT NULL
+          AND length(i.phash) = 16
           AND i.cluster_id IS NOT NULL
           AND ST_DWithin(
             c.centroid::geography,
@@ -53,7 +55,7 @@ export async function processIncidentJob(job: Job<IncidentJobData>) {
       const visualRes = await client.query(visualQuery, [phash, longitude, latitude]);
       if (visualRes.rows.length > 0) {
         targetClusterId = visualRes.rows[0].cluster_id;
-        console.log(`[Worker] Matched via PHASH_VISUAL to Cluster: ${targetClusterId} (dist: ${visualRes.rows[0].dist})`);
+        console.log(`[Worker] Matched via PHASH_VISUAL to Cluster: \({targetClusterId} (dist:\){visualRes.rows[0].dist})`);
       }
     }
 
@@ -154,7 +156,7 @@ export async function processIncidentJob(job: Job<IncidentJobData>) {
       { clusterId: activeClusterId },
       {
         delay: 5000,
-        jobId: `debounce_${activeClusterId}_${Date.now()}`,
+        jobId: `debounce_\({activeClusterId}_\){Date.now()}`,
       }
     );
 
@@ -167,10 +169,11 @@ export async function processIncidentJob(job: Job<IncidentJobData>) {
       });
     }
 
-    console.log(`[Worker] Ingestion job ${job.id} completed successfully.`);
+    console.log(`[Worker] Ingestion job ${jobId} completed successfully.`);
+    return activeClusterId;
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error(`[Worker] Ingestion job ${job.id} failed with error:`, error);
+    console.error(`[Worker] Ingestion job ${jobId} failed with error:`, error);
     throw error;
   } finally {
     client.release();
@@ -183,5 +186,5 @@ export const incidentWorker = new Worker('incident-processing', processIncidentJ
 });
 
 incidentWorker.on('failed', (job, err) => {
-  console.error(`[Worker Event] Job ${job?.id} permanently failed: ${err.message}`);
+  console.error(`[Worker Event] Job \({job?.id} permanently failed:\){err.message}`);
 });
