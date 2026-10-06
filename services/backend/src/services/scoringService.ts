@@ -31,7 +31,7 @@ const analysisOutputSchema = z.object({
 const ai = new GoogleGenAI({});
 
 export class ScoringService {
-  private static readonly SECTOR_WEIGHTS: Record = {
+  private static readonly SECTOR_WEIGHTS: Record<AssetSector, { base: number; multiplier: number }> = {
     drainage: { base: 0.75, multiplier: 1.20 },
     water_supply: { base: 0.85, multiplier: 1.30 },
     roads: { base: 0.50, multiplier: 1.00 },
@@ -57,7 +57,6 @@ export class ScoringService {
       .split('<').join('<')
       .split('>').join('>')
       .trim();
-  }
   }
 
   /**
