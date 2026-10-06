@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { redisConfig } from './intakeQueue';
 
 export interface NotificationJobData {
   recipientPhone: string;
@@ -7,14 +8,8 @@ export interface NotificationJobData {
   ticketId: string;
 }
 
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  password: process.env.REDIS_PASSWORD || undefined,
-};
-
 export const notificationQueue = new Queue('outbound-notifications', {
-  connection: redisConnection,
+  connection: redisConfig as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: {

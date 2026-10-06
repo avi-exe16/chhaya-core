@@ -78,4 +78,51 @@ describe('Visual Deduplication via pHash & PostGIS Hamming Distance', () => {
     );
     expect(clusterRes.rows[0].incident_count).toBe(2);
   });
+
+  it('gracefully handles malformed pHash by falling back to spatial buffer without crashing', async () => {
+    const ticketA = crypto.randomUUID();
+    const ticketB = crypto.randomUUID();
+
+    // Insert incident A with a valid coordinate
+    await pool.query(
+      `INSERT INTO incidents (
+        id, coordinates, phash, phone_hash, source, hardware_timestamp, status, created_at
+      ) VALUES (
+        $1, ST_SetSRID(ST_Point($2, $3), 4326), '1111222233334444', $4, 'whatsapp', NOW(), 'pending', NOW()
+      );`,
+      [ticketA, baseLng, baseLat, hashPhone('+919999999993')]
+    );
+
+    const clusterIdA = await processIncidentJob({
+      ticketId: ticketA,
+      latitude: baseLat,
+      longitude: baseLng,
+      wardId: null,
+      phash: '1111222233334444',
+      recipientPhone: '+919999999993',
+    });
+
+    // Insert incident B within 30 meters (well inside 50m spatial buffer) but with a corrupted pHash
+    const closeLat = baseLat + 0.0002;
+    await pool.query(
+      `INSERT INTO incidents (
+        id, coordinates, phash, phone_hash, source, hardware_timestamp, status, created_at
+      ) VALUES (
+        $1, ST_SetSRID(ST_Point($2, $3), 4326), 'INVALID_HASH', $4, 'whatsapp', NOW(), 'pending', NOW()
+      );`,
+      [ticketB, baseLng, closeLat, hashPhone('+919999999994')]
+    );
+
+    const clusterIdB = await processIncidentJob({
+      ticketId: ticketB,
+      latitude: closeLat,
+      longitude: baseLng,
+      wardId: null,
+      phash: 'INVALID_HASH', // Malformed format bypassed safely
+      recipientPhone: '+919999999994',
+    });
+
+    // Should gracefully bypass hamming_distance and match via spatial proximity
+    expect(clusterIdB).toBe(clusterIdA);
+  });
 });

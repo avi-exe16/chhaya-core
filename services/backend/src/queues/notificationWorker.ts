@@ -1,61 +1,78 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Worker, Job } from 'bullmq';
 import axios from 'axios';
-import { NotificationJobData } from './notificationQueue';
+import { redisConfig } from './intakeQueue';
 
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  password: process.env.REDIS_PASSWORD || undefined,
-};
+const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
+const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
 
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
-
+/**
+ * Citizen Notification Worker:
+ * - Employs dedicated Redis connection
+ * - Concurrency capped at 5 to prevent Graph API rate limits
+ * - Formats civic incident dispatch receipts and updates
+ */
 export const notificationWorker = new Worker(
   'outbound-notifications',
   async (job: Job) => {
-    const { recipientPhone, bodyText, ticketId } = job.data;
+    const { recipientPhone, bodyText, ticketId, clusterId, status } = job.data;
 
-    // Guard against unconfigured Meta credentials during local dev
-    if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
-      console.log(`[NotificationWorker][STUB] Outbound msg to \({recipientPhone} for ticket\){ticketId}: "${bodyText}"`);
-      return;
+    if (!recipientPhone || recipientPhone === 'anonymous') {
+      return { status: 'skipped', reason: 'Anonymous or missing recipient' };
     }
 
-    const endpoint = `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+    const messageBody =
+      bodyText ||
+      `[Chhaya Civic Alert] Your report has been verified and triaged.\nTicket: \({ticketId}\nCluster ID:\){clusterId || 'Pending'}\nStatus: ${status || 'RECEIVED'}\nField teams have been assigned.`;
 
-    await axios.post(
-      endpoint,
-      {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: recipientPhone,
-        type: 'text',
-        text: { preview_url: false, body: bodyText },
+    if (!WHATSAPP_ACCESS_TOKEN || !PHONE_NUMBER_ID) {
+      console.log(
+        `[NotificationWorker] [MOCK_DISPATCH] To: \({recipientPhone} | Ticket:\){ticketId} | Status: ${status || 'DISPATCHED'}`
+      );
+      return { status: 'mock_sent', recipientPhone, ticketId, message: messageBody };
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: recipientPhone,
+      type: 'text',
+      text: {
+        preview_url: false,
+        body: messageBody,
       },
+    };
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      payload,
       {
         headers: {
           Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
           'Content-Type': 'application/json',
         },
-        timeout: 8000,
+        timeout: 10000,
       }
     );
+
+    console.log(`[NotificationWorker] Dispatched WhatsApp update for ticket \({ticketId} to\){recipientPhone}`);
+    return { status: 'delivered', messageId: response.data?.messages?.[0]?.id };
   },
   {
-    connection: redisConnection,
-    concurrency: 10,
+    connection: redisConfig as any,
+    concurrency: 5,
     limiter: {
-      max: 80, // Respect Meta Graph API tier rate limits (per second)
-      duration: 1000,
+      max: 20,
+      duration: 1000, // Maximum 20 outbound dispatches per second
     },
   }
 );
 
 notificationWorker.on('completed', (job) => {
-  console.log(`[NotificationWorker] Dispatched update for ticket ${job.data.ticketId}`);
+  console.log(`[NotificationWorker] Notification job ${job.id} completed successfully.`);
 });
 
 notificationWorker.on('failed', (job, err) => {
-  console.error(`[NotificationWorker] Failed sending to ticket ${job?.data?.ticketId}:`, err.message);
+  console.error(`[NotificationWorker] Job ${job?.id} failed permanently:`, err.message);
 });

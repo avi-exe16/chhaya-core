@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: chhaya_postgres
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: chhaya_redis
+    restart: always
+    env_file:
+      - .env
+    command: ["redis-server", "--requirepass", "redis_secure_2026"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secure_2026", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migration:
+    build:
+      context: .
+      target: web
+    image: backend-web:latest
+    container_name: chhaya_migration
+    restart: "no"
+    command: ["node", "dist/runMigration.js"]
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      target: web
+    image: backend-web:latest
+    container_name: chhaya_web
+    restart: always
+    expose:
+      - "4000"
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      target: worker
+    image: backend-worker:latest
+    container_name: chhaya_worker
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: chhaya_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "3000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      web:
+        condition: service_started
+
+volumes:
+  pgdata:

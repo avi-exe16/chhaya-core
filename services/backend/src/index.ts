@@ -1,87 +1,124 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
-import dotenv from 'dotenv';
-import path from 'path';
-import { db, pool } from './db/client';
-import { redisConnection } from './queues/intakeQueue';
-import './queues/incidentWorker';
+import { pool } from './db/client';
+import { CryptographicAuditLogger } from './services/auditLogger';
 import { WhatsAppController } from './api/whatsappController';
-import { ClusterController } from './api/clusterController';
-
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.use(helmet({
-  contentSecurityPolicy: true,
-  crossOriginEmbedderPolicy: true,
-}));
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Preserve raw buffer for cryptographic signature validation
-app.use(express.json({
-  limit: '2mb',
-  verify: (req: any, _res, buf) => {
-    req.rawBody = buf;
-  }
-}));
-
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    return callback(new Error('CORS Policy: Origin prohibited'), false);
-  },
-  methods: ['GET', 'POST', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Hub-Signature-256'],
-}));
-
-// Diagnostic Health Check
-app.get('/health', async (_req, res) => {
+// Health Check
+app.get('/health', async (_req: Request, res: Response) => {
   try {
-    const dbResult = await db.query('SELECT PostGIS_Full_Version() AS postgis_version, NOW() AS db_time');
-    const redisPing = await redisConnection.ping();
-
-    return res.status(200).json({
-      status: 'UP',
-      service: 'CHHAYA Core Backend',
-      database: {
-        connected: true,
-        postgis: dbResult.rows[0].postgis_version,
-        timestamp: dbResult.rows[0].db_time,
-      },
-      redis: {
-        connected: true,
-        status: redisPing,
-      },
+    const result = await pool.query('SELECT NOW() as current_time;');
+    res.status(200).json({
+      status: 'healthy',
+      database: 'connected',
+      timestamp: result.rows[0].current_time,
     });
   } catch (error: any) {
-    return res.status(500).json({ status: 'DOWN', error: error.message });
+    res.status(500).json({
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message,
+    });
   }
 });
 
-// WhatsApp Cloud API Webhook Endpoints
-app.get('/api/v1/whatsapp/webhook', WhatsAppController.handleVerification);
-app.post('/api/v1/whatsapp/webhook', WhatsAppController.handleInbound);
+// WhatsApp Webhook Ingress
+app.get('/webhook', WhatsAppController.verifyWebhook);
+app.post('/webhook', WhatsAppController.handleIncomingMessage);
 
-// Administrative & Spatial Dispatch Endpoints (Frontend / Tactical Map Contract)
-app.get('/api/v1/clusters/geojson', ClusterController.getClustersGeoJSON);
-app.get('/api/v1/clusters/:id', ClusterController.getClusterDetails);
-app.patch('/api/v1/clusters/:id/status', ClusterController.updateClusterStatus);
+// Cryptographic Audit Ledger Verification (Crosby & Wallach Model)
+app.get('/api/audit/verify', async (_req: Request, res: Response) => {
+  const client = await pool.connect();
+  try {
+    const verification = await CryptographicAuditLogger.verifyChainIntegrity(client);
+    const countRes = await client.query('SELECT COUNT(*) as total FROM audit_logs;');
+    const tipRes = await client.query(
+      'SELECT sequence_num, entry_hash, prev_hash, action, created_at FROM audit_logs ORDER BY sequence_num DESC LIMIT 1;'
+    );
 
-const PORT = Number(process.env.PORT) || 4000;
-const server = app.listen(PORT, () => {
-  console.log(`[CHHAYA Security] Hardened backend gateway active on port ${PORT}`);
+    res.status(200).json({
+      status: 'success',
+      chainIntegrity: verification,
+      totalEntries: parseInt(countRes.rows[0]?.total || '0', 10),
+      currentTip: tipRes.rows[0] || null,
+      verifiedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to verify cryptographic chain integrity',
+      error: error.message,
+    });
+  } finally {
+    client.release();
+  }
 });
 
-const handleShutdown = async () => {
-  console.log('Closing database and cache pools...');
-  await pool.end();
-  await redisConnection.quit();
-  server.close(() => process.exit(0));
-};
+// Active Incident Clusters (GeoJSON format for map visualizers)
+// Active Incident Clusters (GeoJSON format for map visualizers)
+app.get('/api/clusters', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        id,
+        incident_count,
+        vps_score,
+        sai_score,
+        headline,
+        asset_category,
+        sow_memo,
+        status,
+        created_at,
+        ST_X(centroid::geometry) as longitude,
+        ST_Y(centroid::geometry) as latitude
+      FROM incident_clusters
+      ORDER BY created_at DESC;
+    `);
 
-process.on('SIGINT', handleShutdown);
-process.on('SIGTERM', handleShutdown);
+    const geoJson = {
+      type: 'FeatureCollection',
+      features: result.rows.map(row => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [parseFloat(row.longitude), parseFloat(row.latitude)],
+        },
+        properties: {
+          clusterId: row.id,
+          incidentCount: row.incident_count,
+          vpsScore: parseFloat(row.vps_score),
+          saiScore: parseFloat(row.sai_score),
+          headline: row.headline,
+          assetCategory: row.asset_category,
+          sowMemo: row.sow_memo,
+          status: row.status,
+          createdAt: row.created_at,
+        },
+      })),
+    };
+
+    res.status(200).json(geoJson);
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to retrieve incident clusters',
+      error: error.message,
+    });
+  }
+});
+app.listen(PORT, () => {
+  console.log(`[Chhaya Core Backend] Server listening on port ${PORT}`);
+  console.log(`- Health Check:    http://localhost:${PORT}/health`);
+  console.log(`- Webhook Ingress: http://localhost:${PORT}/webhook`);
+  console.log(`- Audit Verify:    http://localhost:${PORT}/api/audit/verify`);
+  console.log(`- Cluster GeoJSON: http://localhost:${PORT}/api/clusters`);
+});
+
+export default app;

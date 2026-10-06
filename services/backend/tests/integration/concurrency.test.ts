@@ -4,6 +4,7 @@ import express from 'express';
 import crypto from 'crypto';
 import { WhatsAppController } from '../../src/api/whatsappController';
 import { db, pool } from '../../src/db/client';
+import { redisConnection, intakeQueue } from '../../src/queues/intakeQueue';
 
 const app = express();
 app.use(express.json());
@@ -11,12 +12,13 @@ app.post('/webhook', WhatsAppController.handleInbound);
 
 describe('High-Throughput Spatial Ingestion & Concurrency Guard', () => {
   beforeAll(async () => {
-    // Purge test incidents
     await db.query(`DELETE FROM incidents WHERE whatsapp_message_id LIKE 'test_%'`);
   });
 
   afterAll(async () => {
     await db.query(`DELETE FROM incidents WHERE whatsapp_message_id LIKE 'test_%'`);
+    await intakeQueue.close();
+    await redisConnection.quit();
     await pool.end();
   });
 

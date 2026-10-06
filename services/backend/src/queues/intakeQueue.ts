@@ -1,33 +1,41 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import dotenv from 'dotenv';
-import path from 'path';
+import { IncidentJobData } from './incidentWorker';
 
-// Resolve from current working directory as well as relative paths
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+const getRedisPassword = () => process.env.REDIS_PASSWORD || 'redis_secure_2026';
+const getRedisHost = () => process.env.REDIS_HOST || 'localhost';
+const getRedisPort = () => parseInt(process.env.REDIS_PORT || '6379', 10);
 
-const redisPassword = process.env.REDIS_PASSWORD || 'redis_secure_2026';
-const redisHost = process.env.REDIS_HOST || 'localhost';
-const redisPort = Number(process.env.REDIS_PORT) || 6379;
-
-export const redisConnection = new IORedis({
-  host: redisHost,
-  port: redisPort,
-  password: redisPassword,
-  username: 'default', // Standard default ACL user for Redis 6/7
+export const redisConfig = {
+  host: getRedisHost(),
+  port: getRedisPort(),
+  password: getRedisPassword(),
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
+  protocol: 2,
+};
+
+// Dedicated ioredis client instance for Express healthcheck & idempotency locks
+export const redisConnection = new IORedis({
+  host: getRedisHost(),
+  port: getRedisPort(),
+  password: getRedisPassword(),
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  protocol: 2,
 });
 
-redisConnection.on('error', (err) => {
-  console.error('[Redis Client Error]', err.message);
-});
-
-redisConnection.on('connect', () => {
-  console.log('[Redis] Connected and authenticated successfully.');
-});
-
-export const intakeQueue = new Queue('civic-intake-queue', {
-  connection: redisConnection,
+export const intakeQueue = new Queue('incident-processing', {
+  connection: redisConfig as any,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+    removeOnComplete: true,
+  },
 });

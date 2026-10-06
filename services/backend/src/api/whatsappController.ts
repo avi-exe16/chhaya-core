@@ -1,110 +1,153 @@
 import { Request, Response } from 'express';
+import axios from 'axios';
 import crypto from 'crypto';
-import { intakeQueue } from '../queues/intakeQueue';
-import { db } from '../db/client';
+import { intakeQueue, redisConnection } from '../queues/intakeQueue';
+import { StorageService } from '../services/storageService';
+import { pool } from '../db/client';
+
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'chhaya_webhook_secret';
+const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
+const PHONE_HASH_SALT = process.env.PHONE_HASH_SALT || 'chhaya_sovereign_salt_2026';
+
+/**
+ * Computes an HMAC-SHA256 salted digest of the phone number.
+ * Defends against precomputed rainbow-table de-anonymization attacks.
+ */
+function hashPhoneNumber(phone: string): string {
+  return crypto
+    .createHmac('sha256', PHONE_HASH_SALT)
+    .update(phone.trim())
+    .digest('hex');
+}
+
+async function fetchMetaMedia(mediaId: string) {
+  const metaUrlRes = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}` },
+    timeout: 8000,
+  });
+
+  const mediaUrl = metaUrlRes.data.url;
+  const mimeType = metaUrlRes.data.mime_type;
+
+  const mediaBinaryRes = await axios.get(mediaUrl, {
+    headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}` },
+    responseType: 'arraybuffer',
+    timeout: 15000,
+    maxContentLength: 15 * 1024 * 1024,
+  });
+
+  return {
+    buffer: Buffer.from(mediaBinaryRes.data),
+    mimeType,
+  };
+}
 
 export class WhatsAppController {
-  private static readonly APP_SECRET = process.env.APP_SECRET || 'super_secret_signing_key_32_characters_minimum_chhaya';
-  private static readonly VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'chhaya_secret_verify_token_2026';
-  private static readonly PII_SALT = process.env.PII_SALT || 'secure_salt_for_anonymizing_phone_hashes_2026';
-
   public static handleVerification(req: Request, res: Response) {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    if (mode === 'subscribe' && token === WhatsAppController.VERIFY_TOKEN) {
-      return res.status(200).send(challenge);
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      res.status(200).send(challenge);
+      return;
     }
-    return res.status(403).json({ error: 'Verification signature mismatch' });
+    res.status(403).send('Forbidden: Token mismatch');
   }
+
+  public static verifyWebhook = WhatsAppController.handleVerification;
 
   public static async handleInbound(req: Request, res: Response) {
-    // 1. Raw Buffer HMAC SHA-256 Validation
-    const signature = req.headers['x-hub-signature-256'] as string;
-    if (process.env.NODE_ENV === 'production') {
-      if (!signature) {
-        return res.status(401).json({ error: 'Missing security signature' });
+    try {
+      const entry = req.body?.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const messageData = changes?.value?.messages?.[0];
+
+      if (!messageData) {
+        res.status(200).send('EVENT_RECEIVED');
+        return;
       }
 
-      const rawBody = (req as any).rawBody;
-      const expectedSignature = `sha256=${crypto
-        .createHmac('sha256', WhatsAppController.APP_SECRET)
-        .update(rawBody)
-        .digest('hex')}`;
+      const messageId = messageData.id;
 
-      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-        return res.status(401).json({ error: 'Tampered payload or signature verification failed' });
+      // ATOMIC BOUNDARY IDEMPOTENCY CHECK
+      // Drops duplicate webhook retries across distributed instances in <= 2ms
+      if (messageId) {
+        const lockKey = `idemp:${messageId}`;
+        const acquired = await redisConnection.set(lockKey, '1', 'EX', 300, 'NX');
+        if (!acquired) {
+          res.status(200).send('DUPLICATE_IGNORED');
+          return;
+        }
+      }
+
+      // Fast ACK to Meta to maintain <200ms latency ceiling
+      res.status(200).send('EVENT_RECEIVED');
+
+      const rawPhone = messageData.from;
+      const phoneHash = rawPhone ? hashPhoneNumber(rawPhone) : 'anonymous';
+      const messageType = messageData.type;
+      const rawTimestamp = messageData.timestamp;
+      const hardwareTimestamp = rawTimestamp
+        ? new Date(parseInt(rawTimestamp, 10) * 1000)
+        : new Date();
+
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let rawText: string | null = null;
+      let phash: string | null = null;
+      let s3Key: string | null = null;
+
+      if (messageType === 'location') {
+        latitude = messageData.location.latitude;
+        longitude = messageData.location.longitude;
+        rawText = messageData.location.name || messageData.location.address || null;
+      } else if (messageType === 'text') {
+        rawText = messageData.text.body;
+      } else if (messageType === 'image') {
+        const mediaId = messageData.image.id;
+        rawText = messageData.image.caption || null;
+
+        if (WHATSAPP_ACCESS_TOKEN) {
+          const { buffer, mimeType } = await fetchMetaMedia(mediaId);
+          const processed = await StorageService.processAndStoreImage(buffer, mimeType);
+          phash = processed.phash;
+          s3Key = processed.s3Key;
+        }
+      }
+
+      if (latitude !== null && longitude !== null) {
+        const ticketId = crypto.randomUUID();
+
+        await pool.query(
+          `INSERT INTO incidents (
+            id, coordinates, phash, media_url, phone_hash, source, raw_text, hardware_timestamp, status, created_at
+          ) VALUES (
+            $1, ST_SetSRID(ST_Point($2, $3), 4326), $4, $5, $6, 'whatsapp', $7, $8, 'pending', NOW()
+          );`,
+          [ticketId, longitude, latitude, phash, s3Key, phoneHash, rawText, hardwareTimestamp]
+        );
+
+        await intakeQueue.add(
+          `incident_${ticketId}`,
+          {
+            ticketId,
+            latitude,
+            longitude,
+            wardId: null,
+            phash,
+            rawText,
+            recipientPhone: rawPhone,
+          }
+        );
+      }
+    } catch (error) {
+      console.error('[WhatsAppController] Ingestion error:', error);
+      if (!res.headersSent) {
+        res.status(200).send('EVENT_RECEIVED');
       }
     }
-
-    const { entry } = req.body;
-    if (!entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-      return res.status(200).send('EVENT_RECEIVED');
-    }
-
-    const message = entry[0].changes[0].value.messages[0];
-    const messageId = message.id;
-
-    // 2. Boundary Idempotency Check
-    // 2. Boundary Idempotency Check
-    if (messageId && typeof messageId === 'string' && messageId.trim().length > 0) {
-      const exists = await db.query(
-        'SELECT id FROM incidents WHERE whatsapp_message_id = $1 LIMIT 1;',
-        [messageId]
-      );
-      if (exists.rows.length > 0) {
-        return res.status(200).send('DUPLICATE_IGNORED');
-      }
-    }
-
-    const rawSender = message.from;
-    const phoneHash = crypto
-      .createHash('sha256')
-      .update(WhatsAppController.PII_SALT + rawSender)
-      .digest('hex');
-
-    const ticketId = crypto.randomUUID();
-    const latitude = message.location?.latitude ?? 25.42004;
-    const longitude = message.location?.longitude ?? 86.13008;
-
-    // 3. Spatially resolve ward boundary
-    // 3. Spatially resolve ward boundary using the indexed boundary column
-    // 3. Spatially resolve ward boundary using the indexed boundary column
-    const wardRes = await db.query(
-      `SELECT id, district FROM wards 
-       WHERE ST_Contains(boundary, ST_SetSRID(ST_Point($1, $2), 4326)) 
-       LIMIT 1;`,
-      [longitude, latitude]
-    );
-
-    const wardId = wardRes.rows[0]?.id ?? null;
-    const district = wardRes.rows[0]?.district ?? null;
-
-    // 4. Initial atomic insert to establish ticket identity with raw coordinates
-    // 4. Atomic insert to establish ticket identity with raw coordinates and explicit source
-    await db.query(
-      `INSERT INTO incidents (
-        id, whatsapp_message_id, phone_hash, ward_id, 
-        coordinates, raw_text, source, hardware_timestamp, status, created_at
-      ) VALUES (
-        $1, $2, $3, $4, 
-        ST_SetSRID(ST_Point($5, $6), 4326), $7, 'whatsapp', NOW(), 'pending', NOW()
-      );`,
-      [ticketId, messageId, phoneHash, wardId, longitude, latitude, message.text?.body || null]
-    );
-
-    // 5. Hand off to distributed worker
-    await intakeQueue.add('process-civic-incident', {
-      ticketId,
-      phoneHash,
-      wardId,
-      district,
-      coordinates: { latitude, longitude, accuracy: message.location?.accuracy || 10 },
-      rawText: message.text?.body,
-      timestamp: new Date().toISOString(),
-    });
-
-    return res.status(200).send('EVENT_RECEIVED');
   }
+
+  public static handleIncomingMessage = WhatsAppController.handleInbound;
 }
