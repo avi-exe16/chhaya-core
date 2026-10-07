@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
+import InspectionDrawer from '@/components/InspectionDrawer';
 
 const ClusterMap = dynamic(
   () => import('@/components/ClusterMap'),
@@ -33,6 +34,11 @@ export default function DashboardPage() {
       </header>
 
       <ClusterMap onSelectCluster={(id) => setSelectedClusterId(id)} />
+
+      <InspectionDrawer
+        clusterId={selectedClusterId}
+        onClose={() => setSelectedClusterId(null)}
+      />
     </main>
   );
 }

@@ -1,3 +1,4 @@
+import { ClusterController } from './api/clusterController';
 import './queues/incidentWorker';
 import './queues/scoringWorker';
 import './queues/notificationWorker';
@@ -116,6 +117,8 @@ app.get('/api/clusters', async (_req: Request, res: Response) => {
     });
   }
 });
+app.get('/api/clusters/:id', ClusterController.getClusterDetails);
+
 app.listen(PORT, () => {
   console.log(`[Chhaya Core Backend] Server listening on port ${PORT}`);
   console.log(`- Health Check:    http://localhost:${PORT}/health`);
