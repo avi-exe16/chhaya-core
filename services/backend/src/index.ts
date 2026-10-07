@@ -1,3 +1,6 @@
+import './queues/incidentWorker';
+import './queues/scoringWorker';
+import './queues/notificationWorker';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { pool } from './db/client';
