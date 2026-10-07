@@ -29,10 +29,8 @@ export default function ClusterMap({ onSelectCluster }: ClusterMapProps) {
           'carto-dark': {
             type: 'raster',
             tiles: [
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://a.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png'
             ],
             tileSize: 256,
             attribution: '&copy; CARTO &copy; OpenStreetMap contributors',
@@ -61,7 +59,7 @@ export default function ClusterMap({ onSelectCluster }: ClusterMapProps) {
         setError(null);
 
         // 2. Fetch GeoJSON from Express API Gateway (Port 4000)
-        const response = await fetch(`${baseUrl}/api/clusters`, {
+        const response = await fetch('/api/clusters', {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
