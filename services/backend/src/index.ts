@@ -118,6 +118,7 @@ app.get('/api/clusters', async (_req: Request, res: Response) => {
   }
 });
 app.get('/api/clusters/:id', ClusterController.getClusterDetails);
+app.patch('/api/clusters/:id/status', ClusterController.updateClusterStatus);
 
 app.listen(PORT, () => {
   console.log(`[Chhaya Core Backend] Server listening on port ${PORT}`);
