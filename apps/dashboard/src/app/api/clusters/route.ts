@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
+const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:4000';
+
 export async function GET(request: NextRequest) {
   try {
-    const backendUrl = process.env.INTERNAL_BACKEND_URL || 'http://127.0.0.1:4000';
     const { searchParams } = new URL(request.url);
     const queryString = searchParams.toString();
-    const url = queryString ? `${backendUrl}/api/clusters?${queryString}` : `${backendUrl}/api/clusters`;
+    const targetUrl = `${BACKEND_URL}/api/clusters${queryString ? `?${queryString}` : ''}`;
 
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(targetUrl, {
+      cache: 'no-store',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
 
     if (!res.ok) {
       return NextResponse.json(
-        { error: `Backend returned status ${res.status}` },
+        { error: `Upstream error: ${res.statusText}` },
         { status: res.status }
       );
     }
@@ -19,8 +27,9 @@ export async function GET(request: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err: any) {
+    console.error('Failed to proxy to backend clusters:', err);
     return NextResponse.json(
-      { error: err.message || 'Failed to connect to backend on 127.0.0.1:4000' },
+      { error: 'Backend unreachable', details: err.message },
       { status: 502 }
     );
   }

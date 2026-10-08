@@ -31,10 +31,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // Required for MapLibre GL WebGL runtime compilation
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://a.basemaps.cartocdn.com https://b.basemaps.cartocdn.com",
-      "connect-src 'self' http://localhost:3000 http://localhost:3001 ws: wss: https://a.basemaps.cartocdn.com https://b.basemaps.cartocdn.com",
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline' blob:",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob: https://*.google.com https://*.googleapis.com https://*.gstatic.com https://*.arcgisonline.com https://server.arcgisonline.com https://*.tile.openstreetmap.org",
+      "connect-src 'self' blob: data: http://localhost:3000 http://localhost:3001 http://localhost:3002 http://127.0.0.1:4000 http://127.0.0.1:3001 ws: wss: https://*.google.com https://*.googleapis.com https://*.arcgisonline.com https://server.arcgisonline.com https://*.tile.openstreetmap.org",
       "worker-src 'self' blob:",
       "child-src 'self' blob:",
       "frame-ancestors 'none'",
@@ -43,7 +44,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: isDev ? ['172.25.231.232', 'localhost:3000'] : [],
+  allowedDevOrigins: isDev ? ['172.25.231.232', '172.25.230.147', 'localhost:3000', 'localhost:3001', 'localhost:3002'] : [],
   async headers() {
     return [
       {

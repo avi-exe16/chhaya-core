@@ -10,7 +10,8 @@
     "test:integration": "vitest run tests/integration",
     "migrate:up": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
-    "test": "vitest run"
+    "test": "vitest run",
+    "simulate": "tsx scripts/simulateIngestion.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
