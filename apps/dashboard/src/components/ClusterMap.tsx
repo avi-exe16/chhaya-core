@@ -7,9 +7,16 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 interface ClusterMapProps {
   onClusterSelect?: (clusterId: string) => void;
   refreshTrigger?: number;
+  statusFilter?: string;
+  onlyHighSeverity?: boolean;
 }
 
-export default function ClusterMap({ onClusterSelect, refreshTrigger = 0 }: ClusterMapProps) {
+export default function ClusterMap({
+  onClusterSelect,
+  refreshTrigger = 0,
+  statusFilter = 'all',
+  onlyHighSeverity = false,
+}: ClusterMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<Map | null>(null);
   const onSelectRef = useRef(onClusterSelect);
@@ -165,7 +172,7 @@ export default function ClusterMap({ onClusterSelect, refreshTrigger = 0 }: Clus
     };
   }, []);
 
-  // 2. Pure data update loop
+  // 2. Pure data update loop with client-side & server-side filter support
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
@@ -173,7 +180,13 @@ export default function ClusterMap({ onClusterSelect, refreshTrigger = 0 }: Clus
 
     async function updateClusterData() {
       try {
-        const response = await fetch('/api/clusters', { cache: 'no-store' });
+        const params = new URLSearchParams();
+        if (statusFilter !== 'all') {
+          params.append('status', statusFilter);
+        }
+
+        const url = params.toString() ? `/api/clusters?${params.toString()}` : '/api/clusters';
+        const response = await fetch(url, { cache: 'no-store' });
         if (!response.ok) {
           throw new Error(`API responded with HTTP ${response.status}: ${response.statusText}`);
         }
@@ -181,9 +194,25 @@ export default function ClusterMap({ onClusterSelect, refreshTrigger = 0 }: Clus
         const geojsonData = await response.json();
         if (!active || !map.current) return;
 
+        // Apply client-side filters (such as High Severity VPS >= 0.4)
+        let filteredFeatures = geojsonData.features || [];
+        if (statusFilter !== 'all') {
+          filteredFeatures = filteredFeatures.filter(
+            (f: any) => f.properties?.status === statusFilter
+          );
+        }
+        if (onlyHighSeverity) {
+          filteredFeatures = filteredFeatures.filter(
+            (f: any) => (f.properties?.vpsScore ?? 0) >= 0.4
+          );
+        }
+
         const source = map.current.getSource('clusters') as GeoJSONSource | undefined;
         if (source) {
-          source.setData(geojsonData);
+          source.setData({
+            type: 'FeatureCollection',
+            features: filteredFeatures,
+          });
         }
       } catch (err: any) {
         if (active) setError(err.message || 'Failed to update cluster layer');
@@ -195,7 +224,7 @@ export default function ClusterMap({ onClusterSelect, refreshTrigger = 0 }: Clus
     return () => {
       active = false;
     };
-  }, [mapLoaded, refreshTrigger]);
+  }, [mapLoaded, refreshTrigger, statusFilter, onlyHighSeverity]);
 
   return (
     <div className="relative h-full w-full">
