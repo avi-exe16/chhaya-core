@@ -3,8 +3,8 @@
 > Real-time civic incident intelligence platform featuring WhatsApp webhook ingress, asynchronous BullMQ/Redis worker pipelines, PostGIS spatial clustering, and a tamper-evident cryptographic audit ledger.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-chhaya--core.vercel.app-0070F3?style=flat&logo=vercel&logoColor=white)](https://chhaya-core.vercel.app)
-[![API Status](https://img.shields.io/badge/Backend%20API-chhaya--core.onrender.com-46E3B7?style=flat&logo=render&logoColor=white)](https://chhaya-core.onrender.com/health)
-[![Audit Verification](https://img.shields.io/badge/Audit%20Ledger-Cryptographically%20Verified-brightgreen?style=flat)](https://chhaya-core.onrender.com/api/audit/verify)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![PostgreSQL / PostGIS](https://img.shields.io/badge/PostgreSQL-PostGIS-336791?style=flat&logo=postgresql&logoColor=white)](https://postgis.net/)
 
 ---
 
@@ -22,39 +22,17 @@ Chhaya-Core is an automated distributed system engineered to collect, deduplicat
 
 ## System Architecture
 
-```
-[ Citizen WhatsApp / Ingress ]
-              |
-              v (Signed Webhook Payload)
-+--------------------------------------------------------+
-|               Ingress API (Express / Node.js)          |
-|       - Redis-backed rate limiting & idempotency       |
-|       - Payload validation (Zod)                       |
-+--------------------------+-----------------------------+
-                           | BullMQ Enqueue
-                           v
-+--------------------------------------------------------+
-|            Distributed Worker Pipeline                 |
-|                                                        |
-|  1. Spatial Matching: PostGIS GiST index queries       |
-|  2. Visual Deduplication: Perceptual pHash Hamming dist|
-|  3. Cluster Aggregation: Merge or spawn cluster entity |
-|  4. Ledger Append: Sequential SHA-256 hash-chaining    |
-+--------------------------+-----------------------------+
-                           |
-             +-------------+-------------+
-             |                           |
-             v                           v
-+-------------------------+ +-------------------------+
-|  PostgreSQL 16+ PostGIS | |      Upstash Redis      |
-|  (Spatial & Audit Log)  | |   (BullMQ Task Queues)  |
-+------------+------------+ +-------------------------+
-             |
-             v (GeoJSON FeatureCollection Proxy)
-+--------------------------------------------------------+
-|           Tactical Command Web Console                 |
-|      Next.js 15 * MapLibre / GeoJSON * Vercel Edge     |
-+--------------------------------------------------------+
+```mermaid
+flowchart TD
+    A[Citizen WhatsApp Ingress] -->|Signed Webhook| B[Express Ingress API]
+    B -->|Idempotency Check| C[(Upstash Redis)]
+    B -->|Enqueue Job| D[BullMQ Queue]
+    D --> E[Distributed Processing Worker]
+    E -->|Spatial Buffer Match| F[(PostgreSQL / PostGIS)]
+    E -->|pHash Deduplication| F
+    E -->|SHA-256 Hash Chain| G[Cryptographic Audit Ledger]
+    F -->|GeoJSON FeatureCollection| H[Next.js 15 Tactical Dashboard]
+    H -->|Vercel Edge Deployment| I[Live Operational Map]
 ```
 
 ---
@@ -64,12 +42,6 @@ Chhaya-Core is an automated distributed system engineered to collect, deduplicat
 Every incident receipt, deduplication merge, and priority recalculation is committed as an immutable node in a cryptographic chain:
 
 `entry_hash[n] = SHA256(sequence_num[n] || action || entity_id || metadata || prev_hash[n-1])`
-
-Verify the chain via the live endpoint:
-
-```bash
-curl [https://chhaya-core.onrender.com/api/audit/verify](https://chhaya-core.onrender.com/api/audit/verify)
-```
 
 ---
 
@@ -85,12 +57,38 @@ curl [https://chhaya-core.onrender.com/api/audit/verify](https://chhaya-core.onr
 
 ---
 
-## Live Endpoints
+## Local Setup & Execution
 
-- **Frontend App:** [https://chhaya-core.vercel.app](https://chhaya-core.vercel.app)
-- **Cluster GeoJSON API:** [https://chhaya-core.vercel.app/api/clusters](https://chhaya-core.vercel.app/api/clusters)
-- **Cryptographic Audit Check:** [https://chhaya-core.onrender.com/api/audit/verify](https://chhaya-core.onrender.com/api/audit/verify)
-- **Backend Health Check:** [https://chhaya-core.onrender.com/health](https://chhaya-core.onrender.com/health)
+### 1. Prerequisites
+* Node.js >= 20.x
+* PostgreSQL with PostGIS extension (`CREATE EXTENSION postgis;`)
+* Redis server (local or Upstash)
+
+### 2. Installation
+```bash
+git clone [https://github.com/avi-exe16/chhaya-core.git](https://github.com/avi-exe16/chhaya-core.git)
+cd chhaya-core
+```
+
+### 3. Backend & Worker Initialization
+```bash
+cd services/backend
+npm install
+npm run migrate:up
+npm run dev
+```
+
+### 4. Running Ingestion Simulations
+```bash
+npm run simulate
+```
+
+### 5. Frontend Dashboard
+```bash
+cd ../../apps/dashboard
+npm install
+npm run dev
+```
 
 ---
 
