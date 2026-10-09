@@ -14,8 +14,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Create Next App",
-  description: 'Automated civic incident ingestion, spatial clustering, and cryptographic audit platform.',
+  metadataBase: new URL('https://chhaya-core.vercel.app'),
+  title: 'Chhaya-Core | Tactical Civic Intelligence',
+  description: 'Real-time civic incident ingestion, PostGIS spatial clustering, and cryptographic audit platform.',
+  openGraph: {
+    title: 'Chhaya-Core | Tactical Civic Intelligence',
+    description: 'Real-time civic incident ingestion, PostGIS spatial clustering, and cryptographic audit platform.',
+    url: 'https://chhaya-core.vercel.app',
+    siteName: 'Chhaya-Core',
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Chhaya-Core | Tactical Civic Intelligence',
+    description: 'Real-time civic incident ingestion, PostGIS spatial clustering, and cryptographic audit platform.',
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
