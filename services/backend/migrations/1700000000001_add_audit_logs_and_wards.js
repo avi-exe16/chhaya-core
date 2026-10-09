@@ -1,4 +1,4 @@
-/* eslint-disable camelcase */
+﻿/* eslint-disable camelcase */
 
 exports.shorthands = undefined;
 
@@ -15,7 +15,7 @@ exports.up = (pgm) => {
 
   pgm.createIndex('wards', 'boundary', { method: 'gist', ifNotExists: true });
 
-  // 2. Cryptographic Audit Logs Table (Crosby & Wallach Model)
+  // 2. Cryptographic Audit Logs Table
   pgm.createTable('audit_logs', {
     sequence_num: { type: 'bigserial', primaryKey: true },
     actor_id: { type: 'varchar(255)', notNull: true },
