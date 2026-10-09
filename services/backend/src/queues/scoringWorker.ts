@@ -24,4 +24,4 @@ scoringWorker.on('completed', (job: Job) => {
 
 scoringWorker.on('failed', (job, err) => {
   console.error(`[ScoringWorker] Failed calculation for cluster ${job?.data?.clusterId}:`, err);
-});
+});scoringWorker.on('error', (err: any) => { console.warn('[scoringWorker] Redis offline:', err.message); });

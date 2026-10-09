@@ -75,4 +75,4 @@ notificationWorker.on('completed', (job) => {
 
 notificationWorker.on('failed', (job, err) => {
   console.error(`[NotificationWorker] Job ${job?.id} failed permanently:`, err.message);
-});
+});notificationWorker.on('error', (err: any) => { console.warn('[notificationWorker] Redis offline:', err.message); });

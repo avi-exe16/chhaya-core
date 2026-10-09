@@ -187,4 +187,4 @@ export const incidentWorker = new Worker('incident-processing', processIncidentJ
 
 incidentWorker.on('failed', (job, err) => {
   console.error(`[Worker Event] Job \({job?.id} permanently failed:\){err.message}`);
-});
+});incidentWorker.on('error', (err: any) => { console.warn('[incidentWorker] Redis offline:', err.message); });
