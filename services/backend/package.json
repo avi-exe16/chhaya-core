@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "start": "node dist/index.js",
     "seed:wards": "tsx src/db/seedWards.ts",
     "test:integration": "vitest run tests/integration",
     "migrate:up": "node-pg-migrate up",
