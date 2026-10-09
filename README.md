@@ -15,7 +15,7 @@ Chhaya-Core is an automated distributed system engineered to collect, deduplicat
 ### Core Capabilities
 - **Webhook Ingress & Deduplication:** Handles WhatsApp report streams via Upstash Redis and BullMQ queues, deduplicating submissions using spatial buffers (`ST_DWithin`) and perceptual image hashing (`pHash`).
 - **Spatial Incident Clustering:** Dynamically merges nearby reports into incident clusters with calculated Vulnerability Priority Scores (VPS) and Severity-Area Indices (SAI).
-- **Verifiable Audit Ledger:** Implements an append-only, tamper-evident hash chain based on the Crosby & Wallach audit accumulator model, providing cryptographic integrity verification over all state changes.
+- **Verifiable Audit Ledger:** Implements an append-only, tamper-evident hash chain inspired by Crosby and Wallach's tamper-evident logging principles, providing cryptographic integrity verification over all state changes.
 - **Tactical Command Dashboard:** A Next.js 15 interface rendering real-time GeoJSON cluster layers with interactive spatial inspection drawers.
 
 ---
@@ -57,6 +57,17 @@ Every incident receipt, deduplication merge, and priority recalculation is commi
 
 ---
 
+## Environment Variables
+
+Create `.env` in `services/backend/`:
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string with PostGIS enabled |
+| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint for queues |
+| `UPSTASH_REDIS_REST_TOKEN` | Yes | Upstash Redis authentication token |
+
+---
+
 ## Local Setup & Execution
 
 ### 1. Prerequisites
@@ -66,7 +77,7 @@ Every incident receipt, deduplication merge, and priority recalculation is commi
 
 ### 2. Installation
 ```bash
-git clone [https://github.com/avi-exe16/chhaya-core.git](https://github.com/avi-exe16/chhaya-core.git)
+git clone https://github.com/avi-exe16/chhaya-core.git
 cd chhaya-core
 ```
 
