@@ -15,16 +15,6 @@ interface ClusterItem {
   lastUpdated: string;
 }
 
-interface AuditItem {
-  sequence: number;
-  action: string;
-  clusterId: string;
-  imageHash: string;
-  prevHash: string;
-  entryHash: string;
-  timestamp: string;
-}
-
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 
@@ -50,11 +40,8 @@ async function redisCommand(command: any[]) {
 declare global {
   // eslint-disable-next-line no-var
   var activeClusters: ClusterItem[] | undefined;
-  // eslint-disable-next-line no-var
-  var auditLedger: AuditItem[] | undefined;
 }
 globalThis.activeClusters = globalThis.activeClusters || [];
-globalThis.auditLedger = globalThis.auditLedger || [];
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3;
@@ -72,14 +59,15 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { latitude, longitude, description, image } = body;
+
     if (!latitude || !longitude || !image) {
-      return NextResponse.json({ error: 'Missing mandatory fields' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing coordinates or photo proof.' }, { status: 400 });
     }
 
     const imageHash = crypto.createHash('sha256').update(image).digest('hex').slice(0, 16);
 
-    let raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
     let clusters: ClusterItem[] = [];
+    const raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
     if (raw) {
       try { clusters = JSON.parse(raw); } catch {}
     }
@@ -95,7 +83,7 @@ export async function POST(req: Request) {
     if (matchedCluster) {
       matchedCluster.reportsCount += 1;
       matchedCluster.lastUpdated = new Date().toISOString();
-      matchedCluster.images.unshift(image);
+      matchedCluster.images = [image, ...matchedCluster.images.slice(0, 3)];
       matchedCluster.vps = Math.min(1.0, Number((matchedCluster.vps + 0.1).toFixed(2)));
       clusterId = matchedCluster.id;
     } else {
@@ -116,47 +104,23 @@ export async function POST(req: Request) {
       clusters.unshift(newCluster);
     }
 
-    let rawLedger = await redisCommand(['GET', 'CHHAYA_LEDGER']);
-    let ledger: AuditItem[] = [];
-    if (rawLedger) {
-      try { ledger = JSON.parse(rawLedger); } catch {}
-    }
-    const prevHash = ledger.length > 0 ? ledger[ledger.length - 1].entryHash : '0'.repeat(64);
-    const seq = ledger.length + 1;
-    const entryHash = crypto
-      .createHash('sha256')
-      .update(seq + '|REPORT_INGEST|' + clusterId + '|' + imageHash + '|' + prevHash)
-      .digest('hex');
-
-    ledger.push({
-      sequence: seq,
-      action: 'REPORT_INGEST',
-      clusterId,
-      imageHash,
-      prevHash,
-      entryHash,
-      timestamp: new Date().toISOString(),
-    });
-
     await redisCommand(['SET', 'CHHAYA_CLUSTERS', JSON.stringify(clusters)]);
-    await redisCommand(['SET', 'CHHAYA_LEDGER', JSON.stringify(ledger)]);
     globalThis.activeClusters = clusters;
-    globalThis.auditLedger = ledger;
 
     return NextResponse.json({
       success: true,
       clusterId,
-      auditHash: entryHash,
+      imageHash,
       merged: Boolean(matchedCluster),
     });
-  } catch {
-    return NextResponse.json({ error: 'Internal processing failed' }, { status: 500 });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message || 'Internal failure' }, { status: 500 });
   }
 }
 
 export async function GET() {
-  let raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
   let clusters: ClusterItem[] = [];
+  const raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
   if (raw) {
     try { clusters = JSON.parse(raw); } catch {}
   }
