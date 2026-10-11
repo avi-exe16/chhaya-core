@@ -25,13 +25,34 @@ interface AuditItem {
   timestamp: string;
 }
 
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+
+async function redisCommand(command: any[]) {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  try {
+    const res = await fetch(UPSTASH_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + UPSTASH_TOKEN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+      cache: 'no-store',
+    });
+    const data = await res.json();
+    return data.result;
+  } catch {
+    return null;
+  }
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var activeClusters: ClusterItem[] | undefined;
   // eslint-disable-next-line no-var
   var auditLedger: AuditItem[] | undefined;
 }
-
 globalThis.activeClusters = globalThis.activeClusters || [];
 globalThis.auditLedger = globalThis.auditLedger || [];
 
@@ -54,25 +75,36 @@ export async function POST(req: Request) {
     if (!latitude || !longitude || !image) {
       return NextResponse.json({ error: 'Missing mandatory fields' }, { status: 400 });
     }
+
     const imageHash = crypto.createHash('sha256').update(image).digest('hex').slice(0, 16);
-    const clusters = globalThis.activeClusters!;
+
+    let raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
+    let clusters: ClusterItem[] = [];
+    if (raw) {
+      try { clusters = JSON.parse(raw); } catch {}
+    }
+    if (clusters.length === 0 && globalThis.activeClusters) {
+      clusters = globalThis.activeClusters;
+    }
+
     const matchedCluster = clusters.find((c) => {
       return calculateDistance(latitude, longitude, c.lat, c.lng) <= 50;
     });
+
     let clusterId: string;
     if (matchedCluster) {
       matchedCluster.reportsCount += 1;
       matchedCluster.lastUpdated = new Date().toISOString();
-      matchedCluster.images.push(image);
-      matchedCluster.vps = Math.min(1.0, matchedCluster.vps + 0.1);
+      matchedCluster.images.unshift(image);
+      matchedCluster.vps = Math.min(1.0, Number((matchedCluster.vps + 0.1).toFixed(2)));
       clusterId = matchedCluster.id;
     } else {
-      clusterId = 'CLUST-' + Date.now().toString().slice(-4);
+      clusterId = 'INC-' + Date.now().toString().slice(-4);
       const newCluster: ClusterItem = {
         id: clusterId,
         lat: latitude,
         lng: longitude,
-        description: description || 'Civic infrastructure report',
+        description: description || 'Civic infrastructure anomaly',
         reportsCount: 1,
         vps: 0.65,
         sai: 0.72,
@@ -81,15 +113,21 @@ export async function POST(req: Request) {
         createdAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
       };
-      clusters.push(newCluster);
+      clusters.unshift(newCluster);
     }
-    const ledger = globalThis.auditLedger!;
+
+    let rawLedger = await redisCommand(['GET', 'CHHAYA_LEDGER']);
+    let ledger: AuditItem[] = [];
+    if (rawLedger) {
+      try { ledger = JSON.parse(rawLedger); } catch {}
+    }
     const prevHash = ledger.length > 0 ? ledger[ledger.length - 1].entryHash : '0'.repeat(64);
     const seq = ledger.length + 1;
     const entryHash = crypto
       .createHash('sha256')
       .update(seq + '|REPORT_INGEST|' + clusterId + '|' + imageHash + '|' + prevHash)
       .digest('hex');
+
     ledger.push({
       sequence: seq,
       action: 'REPORT_INGEST',
@@ -99,6 +137,12 @@ export async function POST(req: Request) {
       entryHash,
       timestamp: new Date().toISOString(),
     });
+
+    await redisCommand(['SET', 'CHHAYA_CLUSTERS', JSON.stringify(clusters)]);
+    await redisCommand(['SET', 'CHHAYA_LEDGER', JSON.stringify(ledger)]);
+    globalThis.activeClusters = clusters;
+    globalThis.auditLedger = ledger;
+
     return NextResponse.json({
       success: true,
       clusterId,
@@ -111,8 +155,13 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    clusters: globalThis.activeClusters || [],
-    ledger: globalThis.auditLedger || [],
-  });
+  let raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
+  let clusters: ClusterItem[] = [];
+  if (raw) {
+    try { clusters = JSON.parse(raw); } catch {}
+  }
+  if (clusters.length === 0) {
+    clusters = globalThis.activeClusters || [];
+  }
+  return NextResponse.json({ clusters }, { headers: { 'Cache-Control': 'no-store' } });
 }
