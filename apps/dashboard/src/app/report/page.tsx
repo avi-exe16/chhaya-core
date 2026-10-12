@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 
 export default function CitizenReportPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [address, setAddress] = useState<string>('Requesting GPS lock...');
+  const [address, setAddress] = useState<string>('Locking GPS coordinates...');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [compressedBase64, setCompressedBase64] = useState<string | null>(null);
   const [textDescription, setTextDescription] = useState<string>('');
@@ -16,12 +16,12 @@ export default function CitizenReportPage() {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setAddress('📍 GPS Locked: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4));
+          setAddress('📍 GPS Verified: ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4));
         },
         (err) => {
-          setAddress('⚠️ GPS denied. Please enable location permissions.');
+          setAddress('⚠️ GPS Required. Please enable device location.');
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 8000 }
       );
     }
   }, []);
@@ -32,9 +32,9 @@ export default function CitizenReportPage() {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
+        const maxDim = 800;
         let width = img.width;
         let height = img.height;
-        const maxDim = 1000;
         if (width > height && width > maxDim) {
           height = Math.round((height * maxDim) / width);
           width = maxDim;
@@ -46,7 +46,8 @@ export default function CitizenReportPage() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+        // 60% quality JPEG is ~80KB: guaranteed to beat any Vercel payload limit
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
         setImagePreview(dataUrl);
         setCompressedBase64(dataUrl);
       };
@@ -55,24 +56,19 @@ export default function CitizenReportPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) compressImage(file);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coords) {
-      alert('Please allow GPS location access to register incident location.');
+      alert('Please allow GPS location access.');
       return;
     }
     if (!compressedBase64) {
-      alert('Please capture a live photo before submitting.');
+      alert('Please capture a live photo.');
       return;
     }
 
     setIsSubmitting(true);
-    setStatus('⏳ Uploading verified report...');
+    setStatus('⏳ Uploading verified report to command center...');
 
     try {
       const res = await fetch('/api/reports/submit', {
@@ -81,63 +77,67 @@ export default function CitizenReportPage() {
         body: JSON.stringify({
           latitude: coords.lat,
           longitude: coords.lng,
-          description: textDescription || 'Civic hazard reported via live camera.',
+          description: textDescription || 'Civic infrastructure anomaly',
           image: compressedBase64,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setStatus('✅ Successfully Registered! Incident ID: ' + data.clusterId + (data.merged ? ' (Merged into existing cluster)' : ''));
+        setStatus('✅ Logged into Control Room! ID: ' + data.clusterId);
         setTextDescription('');
       } else {
-        setStatus('❌ Server error: ' + (data.error || 'Failed to submit.'));
+        setStatus('❌ Server error: ' + (data.error || 'Retry submission.'));
       }
     } catch (err: any) {
-      setStatus('❌ Network error: ' + (err.message || 'Check your connection.'));
+      setStatus('❌ Connection issue: ' + (err.message || 'Check internet.'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center p-4">
-      <div className="w-full max-w-md bg-slate-800 rounded-xl p-6 border border-slate-700 shadow-xl">
-        <h1 className="text-xl font-bold text-sky-400 mb-1">Civic Grievance Ingress</h1>
-        <p className="text-xs text-slate-300 font-mono mb-4">{address}</p>
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center p-4">
+      <div className="w-full max-w-md bg-slate-900 rounded-2xl p-6 border border-slate-800 shadow-2xl mt-4">
+        <div className="flex items-center space-x-2 mb-2">
+          <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse"></span>
+          <h1 className="text-lg font-black tracking-wide text-sky-400">CHHAYA CIVIC INGRESS</h1>
+        </div>
+        <p className="text-xs text-slate-400 font-mono mb-4 bg-slate-950 p-2 rounded border border-slate-800/80">{address}</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase text-slate-300 mb-1">
-              Live Photo Proof (Live Camera Only)
+            <label className="block text-xs font-semibold uppercase text-slate-300 mb-1.5">
+              Live Photographic Proof
             </label>
-            <label className="flex flex-col items-center justify-center border-2 border-dashed border-sky-500/50 rounded-lg p-4 cursor-pointer hover:bg-slate-700/50 transition">
-              <span className="text-sm font-medium text-sky-300">
-                {imagePreview ? '📷 Retake Photo' : '📷 Tap to Open Camera'}
+            <label className="flex flex-col items-center justify-center border-2 border-dashed border-sky-500/40 rounded-xl p-5 cursor-pointer hover:bg-slate-800/60 transition bg-slate-950/40">
+              <span className="text-sm font-semibold text-sky-300">
+                {imagePreview ? '📷 Retake Live Shutter' : '📷 Tap to Open Live Camera'}
               </span>
+              <span className="text-[11px] text-slate-500 mt-1">Gallery selection blocked for anti-fraud</span>
               <input
                 type="file"
                 accept="image/*"
                 capture="environment"
                 className="hidden"
-                onChange={handleCapture}
+                onChange={(e) => { if (e.target.files?.[0]) compressImage(e.target.files[0]); }}
                 required
               />
             </label>
             {imagePreview && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={imagePreview} alt="Live Preview" className="mt-2 rounded-lg h-44 w-full object-cover border border-slate-700" />
+              <img src={imagePreview} alt="Live Preview" className="mt-3 rounded-xl h-48 w-full object-cover border border-slate-700 shadow-inner" />
             )}
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase text-slate-300 mb-1">
-              Issue Description
+            <label className="block text-xs font-semibold uppercase text-slate-300 mb-1.5">
+              Issue Details
             </label>
             <textarea
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500 text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:border-sky-500 text-slate-200"
               rows={3}
-              placeholder="Describe the issue..."
+              placeholder="Briefly describe what is broken (e.g. Broken culvert, open drain)..."
               value={textDescription}
               onChange={(e) => setTextDescription(e.target.value)}
             />
@@ -146,14 +146,14 @@ export default function CitizenReportPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2.5 rounded-lg text-sm transition disabled:opacity-50"
+            className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg disabled:opacity-50"
           >
-            {isSubmitting ? 'Submitting...' : 'Submit Report'}
+            {isSubmitting ? 'Verifying & Transmitting...' : 'Transmit Verified Report'}
           </button>
         </form>
 
         {status && (
-          <div className="mt-4 p-3 bg-slate-950 border border-slate-700 rounded-lg text-center text-xs font-mono text-sky-300">
+          <div className="mt-4 p-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-xs font-mono text-sky-300">
             {status}
           </div>
         )}

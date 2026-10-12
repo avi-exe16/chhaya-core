@@ -15,33 +15,14 @@ interface ClusterItem {
   lastUpdated: string;
 }
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-
-async function redisCommand(command: any[]) {
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
-  try {
-    const res = await fetch(UPSTASH_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + UPSTASH_TOKEN,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(command),
-      cache: 'no-store',
-    });
-    const data = await res.json();
-    return data.result;
-  } catch {
-    return null;
-  }
-}
-
+// In-memory fallback backed by global node scope
 declare global {
   // eslint-disable-next-line no-var
-  var activeClusters: ClusterItem[] | undefined;
+  var globalStore: ClusterItem[] | undefined;
 }
-globalThis.activeClusters = globalThis.activeClusters || [];
+if (!globalThis.globalStore) {
+  globalThis.globalStore = [];
+}
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3;
@@ -61,41 +42,29 @@ export async function POST(req: Request) {
     const { latitude, longitude, description, image } = body;
 
     if (!latitude || !longitude || !image) {
-      return NextResponse.json({ error: 'Missing coordinates or photo proof.' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing coordinates or image proof.' }, { status: 400 });
     }
 
-    const imageHash = crypto.createHash('sha256').update(image).digest('hex').slice(0, 16);
-
-    let clusters: ClusterItem[] = [];
-    const raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
-    if (raw) {
-      try { clusters = JSON.parse(raw); } catch {}
-    }
-    if (clusters.length === 0 && globalThis.activeClusters) {
-      clusters = globalThis.activeClusters;
-    }
-
-    const matchedCluster = clusters.find((c) => {
-      return calculateDistance(latitude, longitude, c.lat, c.lng) <= 50;
-    });
-
+    const clusters = globalThis.globalStore!;
+    const matched = clusters.find((c) => calculateDistance(latitude, longitude, c.lat, c.lng) <= 60);
     let clusterId: string;
-    if (matchedCluster) {
-      matchedCluster.reportsCount += 1;
-      matchedCluster.lastUpdated = new Date().toISOString();
-      matchedCluster.images = [image, ...matchedCluster.images.slice(0, 3)];
-      matchedCluster.vps = Math.min(1.0, Number((matchedCluster.vps + 0.1).toFixed(2)));
-      clusterId = matchedCluster.id;
+
+    if (matched) {
+      matched.reportsCount += 1;
+      matched.lastUpdated = new Date().toISOString();
+      matched.images.unshift(image);
+      matched.vps = Math.min(1.0, Number((matched.vps + 0.1).toFixed(2)));
+      clusterId = matched.id;
     } else {
-      clusterId = 'INC-' + Date.now().toString().slice(-4);
+      clusterId = 'INC-' + Math.floor(1000 + Math.random() * 9000);
       const newCluster: ClusterItem = {
         id: clusterId,
-        lat: latitude,
-        lng: longitude,
-        description: description || 'Civic infrastructure anomaly',
+        lat: Number(latitude),
+        lng: Number(longitude),
+        description: description || 'Civic infrastructure defect',
         reportsCount: 1,
-        vps: 0.65,
-        sai: 0.72,
+        vps: 0.85,
+        sai: 0.76,
         status: 'PENDING_ACTION',
         images: [image],
         createdAt: new Date().toISOString(),
@@ -104,28 +73,19 @@ export async function POST(req: Request) {
       clusters.unshift(newCluster);
     }
 
-    await redisCommand(['SET', 'CHHAYA_CLUSTERS', JSON.stringify(clusters)]);
-    globalThis.activeClusters = clusters;
-
     return NextResponse.json({
       success: true,
       clusterId,
-      imageHash,
-      merged: Boolean(matchedCluster),
+      merged: Boolean(matched),
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Internal failure' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Ingress failure' }, { status: 500 });
   }
 }
 
 export async function GET() {
-  let clusters: ClusterItem[] = [];
-  const raw = await redisCommand(['GET', 'CHHAYA_CLUSTERS']);
-  if (raw) {
-    try { clusters = JSON.parse(raw); } catch {}
-  }
-  if (clusters.length === 0) {
-    clusters = globalThis.activeClusters || [];
-  }
-  return NextResponse.json({ clusters }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json(
+    { clusters: globalThis.globalStore || [] },
+    { headers: { 'Cache-Control': 'no-store, max-age=0' } }
+  );
 }
